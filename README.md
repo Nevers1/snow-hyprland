@@ -135,6 +135,14 @@ and its top edge sits at the screen edge. That matches the reference.
 The overlay is hidden while a window on that output is fullscreen (Hyprland
 reports `fullscreen: 2`), and on outputs switched off in the menu or config.
 
+Snow on a window is clipped where another window is painted over it. The order
+comes from Hyprland's renderer, not from `hyprctl clients`: tiled windows are
+painted first, floating ones on top, each group in client-list order. Taking
+the client list at face value made a tiled window behind a floating one look
+like an occluder, and the floating window's snow vanished until it was clicked
+(which moved it in that list). `snowhush ctl surfaces` prints the occluder
+count per window, so the two orders can be compared.
+
 ## Files
 
 ```
