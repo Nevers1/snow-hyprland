@@ -33,20 +33,47 @@ snowhush --snowfall heavy --fps 120
 
 The surfaces take no input, so clicks go straight through to the window below.
 
-A systemd user unit:
+## Autostart
+
+`make install` puts the binary in `~/.local/bin/snowhush`. A systemd user
+unit then keeps it running — copy the file below to
+`~/.config/systemd/user/snowhush.service`, then:
 
 ```ini
+# ~/.config/systemd/user/snowhush.service
 [Unit]
-Description=Snowhush snow
+Description=Snowhush — snow on the desktop
 After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
+Type=simple
 ExecStart=%h/.local/bin/snowhush
 Restart=on-failure
+RestartSec=2
+PassEnvironment=WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target
 ```
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now snowhush
+```
+
+Wayland is not a systemd session on a plain Hyprland setup, so
+`graphical-session.target` stays inactive and nothing would pull the unit in on
+its own. Add one line to `hyprland.conf`, next to the environment imports:
+
+```ini
+exec-once = systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
+exec-once = systemctl --user start snowhush
+```
+
+`enable` is still worth it: the unit then starts with the user manager, and if
+it wins the race with Hyprland it exits and `Restart=on-failure`/`RestartSec`
+picks it up once `WAYLAND_DISPLAY` is in the manager's environment.
 
 ## Tray menu
 
@@ -63,6 +90,7 @@ snowfall choice — because Waybar draws no checkbox of its own:
 | ✓ Accumulate | snow settles into drifts instead of being swept away as it lands |
 | ✓ Melt | drifts lose a little height over time; off keeps them forever |
 | ✓ No snow over fullscreen | while a window on that output is fullscreen the overlay is hidden entirely, so a film or a game gets a clean screen |
+| ✓ Only in season (12-01 - 03-01) | snow exists only inside that window of the year; dates come from the config, and the range wraps over New Year (start December, end March) |
 | Clear snow | a gust blows every flake and drift off the screen |
 | Quit Snowhush | stop the app |
 
@@ -86,6 +114,9 @@ snowhush ctl melt on|off
 snowhush ctl windows on|off
 snowhush ctl behind on|off
 snowhush ctl fullscreen on|off      # no snow over a fullscreen window
+snowhush ctl season on|off          # only snow between the season dates
+snowhush ctl season start 12-01     # first day with snow
+snowhush ctl season end 03-01       # first day without it
 snowhush ctl monitors               # per-output state
 snowhush ctl monitor HDMI-A-2 off   # snow only on the other output
 snowhush ctl monitors all           # back on everywhere
@@ -109,8 +140,19 @@ snow_on_windows = on
 behind_windows = off
 monitors_off =                 # comma separated outputs without snow
 hide_fullscreen = on
+season = on                    # only snow between season_start and season_end
+season_start = 12-01           # MM-DD, first day with snow
+season_end = 03-01             # MM-DD, first day without it (exclusive)
 fps = 60                       # ceiling for the interactive frame rate
 ```
+
+The season dates are compared as `MMDD` integers, so the range may wrap over
+New Year: `12-01 .. 03-01` is December, January and February. A season that ends
+before it starts is therefore not a mistake. Outside the window the outputs are
+blanked and their simulations frozen, exactly like unticking a screen, and the
+`ctl status` line says `(off season)` instead of `(snowing)`. The check runs once
+a second, so a machine left on overnight starts snowing on December 1st by
+itself.
 
 ## How it works
 

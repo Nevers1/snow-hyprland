@@ -55,6 +55,13 @@ typedef struct {
     int hideFullscreen;
     /* Outputs that are switched off, comma separated. Empty means every output. */
     char monitorsOff[512];
+    /* Only snow between these two dates, e.g. 12-01 .. 03-01. */
+    int seasonEnabled;
+    char seasonStart[8];
+    char seasonEnd[8];
+    int seasonNow;      /* is today inside the season */
+    int seasonRange[2]; /* start and end as MMDD, parsed once from the config */
+    double seasonAt;
     int maxFps;
 
     double pollAt;
@@ -148,6 +155,9 @@ static void config_load(void)
         else if (strcmp(key, "behind_windows") == 0) app.behindWindows = parse_onoff(value, app.behindWindows);
         else if (strcmp(key, "hide_fullscreen") == 0) app.hideFullscreen = parse_onoff(value, app.hideFullscreen);
         else if (strcmp(key, "monitors_off") == 0) snprintf(app.monitorsOff, sizeof(app.monitorsOff), "%s", value);
+        else if (strcmp(key, "season") == 0) app.seasonEnabled = parse_onoff(value, app.seasonEnabled);
+        else if (strcmp(key, "season_start") == 0) snprintf(app.seasonStart, sizeof(app.seasonStart), "%s", value);
+        else if (strcmp(key, "season_end") == 0) snprintf(app.seasonEnd, sizeof(app.seasonEnd), "%s", value);
         else if (strcmp(key, "fps") == 0) app.maxFps = atoi(value);
     }
     fclose(file);
@@ -176,11 +186,59 @@ static void config_save(void)
             "monitors_off = %s\n"
             "# No snow while a window is fullscreen.\n"
             "hide_fullscreen = %s\n"
+            "# Only snow inside this window of the year (MM-DD, the end is exclusive).\n"
+            "season = %s\n"
+            "season_start = %s\n"
+            "season_end = %s\n"
             "fps = %d\n",
             snowfall_name(app.snowfall), app.accumulates ? "on" : "off", app.thaws ? "on" : "off",
             app.snowOnWindows ? "on" : "off", app.behindWindows ? "on" : "off", app.monitorsOff,
-            app.hideFullscreen ? "on" : "off", app.maxFps);
+            app.hideFullscreen ? "on" : "off", app.seasonEnabled ? "on" : "off", app.seasonStart,
+            app.seasonEnd, app.maxFps);
     fclose(file);
+}
+
+/* ------------------------------------------------------------------ */
+/* the season: snow only inside a window of the year                   */
+
+/* "12-01" becomes 1201, so a plain integer compare is enough. */
+static int parse_month_day(const char *text, int fallback)
+{
+    if (!text || !*text) return fallback;
+    int month = 0, day = 0;
+    char separator = 0;
+    if (sscanf(text, "%d%c%d", &month, &separator, &day) < 3) return fallback;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return fallback;
+    return month * 100 + day;
+}
+
+static void season_parse(void)
+{
+    app.seasonRange[0] = parse_month_day(app.seasonStart, 1201);
+    app.seasonRange[1] = parse_month_day(app.seasonEnd, 301);
+}
+
+/* A season may run over New Year (December to March), so the range wraps. */
+static int season_today(void)
+{
+    time_t now = time(NULL);
+    struct tm local;
+    localtime_r(&now, &local);
+    int today = (local.tm_mon + 1) * 100 + local.tm_mday;
+    int start = app.seasonRange[0], end = app.seasonRange[1];
+    if (start <= end) return today >= start && today < end;
+    return today >= start || today < end;
+}
+
+static void season_refresh(double now)
+{
+    if (!app.seasonEnabled) {
+        app.seasonNow = 1;
+        return;
+    }
+    if (now < app.seasonAt) return;
+    app.seasonAt = now + 1.0;
+    app.seasonNow = season_today();
 }
 
 /* ------------------------------------------------------------------ */
@@ -251,6 +309,7 @@ enum {
     MENU_SEPARATOR = 25,
     MENU_CLEAR,
     MENU_QUIT,
+    MENU_SEASON = 28,
     MENU_MONITOR_BASE = 100,
 };
 
@@ -331,6 +390,9 @@ static int tray_build(TrayItem *items, int capacity)
     menu_add(items, &count, capacity, MENU_MELT, 0, TRAY_CHECK, app.thaws, "Melt");
     menu_add(items, &count, capacity, MENU_FULLSCREEN, 0, TRAY_CHECK, app.hideFullscreen,
              "No snow over fullscreen");
+    static char seasonLabel[96];
+    snprintf(seasonLabel, sizeof(seasonLabel), "Only in season (%s - %s)", app.seasonStart, app.seasonEnd);
+    menu_add(items, &count, capacity, MENU_SEASON, 0, TRAY_CHECK, app.seasonEnabled, seasonLabel);
     menu_add(items, &count, capacity, MENU_SEPARATOR, 0, TRAY_SEPARATOR, 0, "");
     menu_add(items, &count, capacity, MENU_CLEAR, 0, TRAY_PLAIN, 0, "Clear snow");
     menu_add(items, &count, capacity, MENU_QUIT, 0, TRAY_PLAIN, 0, "Quit Snowhush");
@@ -371,6 +433,11 @@ static void tray_menu_event(int id)
         apply_settings();
     } else if (id == MENU_FULLSCREEN) {
         app.hideFullscreen = !app.hideFullscreen;
+    } else if (id == MENU_SEASON) {
+        app.seasonEnabled = !app.seasonEnabled;
+        season_parse();
+        app.seasonNow = app.seasonEnabled ? season_today() : 1;
+        app.seasonAt = 0;
     } else if (id == MENU_CLEAR) {
         clear_snow();
     } else if (id == MENU_QUIT) {
@@ -474,6 +541,24 @@ static void handle_control(void)
         config_save();
         tray_refresh(app.tray);
         snprintf(reply, sizeof(reply), "hide_fullscreen %s\n", app.hideFullscreen ? "on" : "off");
+    } else if (strcmp(command, "season") == 0) {
+        char *first = strtok(NULL, " ");
+        char *second = strtok(NULL, " ");
+        if (first && strcmp(first, "start") == 0 && second) {
+            snprintf(app.seasonStart, sizeof(app.seasonStart), "%s", second);
+            season_parse();
+        } else if (first && strcmp(first, "end") == 0 && second) {
+            snprintf(app.seasonEnd, sizeof(app.seasonEnd), "%s", second);
+            season_parse();
+        } else {
+            app.seasonEnabled = parse_onoff(first, !app.seasonEnabled);
+        }
+        app.seasonNow = app.seasonEnabled ? season_today() : 1;
+        app.seasonAt = 0;
+        config_save();
+        tray_refresh(app.tray);
+        snprintf(reply, sizeof(reply), "season %s %s..%s (%s)\n", app.seasonEnabled ? "on" : "off", app.seasonStart,
+                 app.seasonEnd, !app.seasonEnabled || app.seasonNow ? "snowing" : "off season");
     } else if (strcmp(command, "monitors") == 0) {
         char *value = strtok(NULL, " "); /* "all" clears the list */
         if (value && strcmp(value, "all") == 0) {
@@ -515,10 +600,12 @@ static void handle_control(void)
     } else if (strcmp(command, "status") == 0) {
         snprintf(reply, sizeof(reply),
                  "snowfall %s\naccumulate %s\nmelt %s\nsnow_on_windows %s\nbehind_windows %s\n"
-                 "hide_fullscreen %s\nmonitors_off %s\nfps %d\n",
+                 "hide_fullscreen %s\nmonitors_off %s\nseason %s %s..%s (%s)\nfps %d\n",
                  snowfall_name(app.snowfall), app.accumulates ? "on" : "off", app.thaws ? "on" : "off",
                  app.snowOnWindows ? "on" : "off", app.behindWindows ? "on" : "off",
-                 app.hideFullscreen ? "on" : "off", app.monitorsOff[0] ? app.monitorsOff : "-", app.maxFps);
+                 app.hideFullscreen ? "on" : "off", app.monitorsOff[0] ? app.monitorsOff : "-",
+                 app.seasonEnabled ? "on" : "off", app.seasonStart, app.seasonEnd,
+                 !app.seasonEnabled || app.seasonNow ? "snowing" : "off season", app.maxFps);
     } else if (strcmp(command, "surfaces") == 0) {
         static char dump[8192];
         dump[0] = 0;
@@ -864,6 +951,7 @@ static int draw_output(Output *o, double now, float dt, int changedAny)
     int muted = 0;
     if (monitor) {
         if (!monitor_enabled(o->name)) muted = 1;
+        else if (app.seasonEnabled && !app.seasonNow) muted = 1;
         else if (app.hideFullscreen && fullscreen_on(&app.state, monitor)) muted = 1;
     }
     if (muted) {
@@ -981,6 +1069,8 @@ static void run_loop(void)
         if (dt > 0.05f) dt = 0.05f;
         if (dt <= 0) dt = 1.0f / 60;
 
+        season_refresh(now);
+
         /* Windows and the pointer change less often than the snow needs drawing. */
         if (now - app.pollAt >= (now - app.lastWindowChange < 0.6 ? 1.0 / 62.0 : 0.2)) {
             hypr_state_free(&app.state);
@@ -1065,10 +1155,16 @@ int main(int argc, char *argv[])
     app.behindWindows = 0;
     app.hideFullscreen = 1;
     app.monitorsOff[0] = 0;
+    app.seasonEnabled = 0;
+    snprintf(app.seasonStart, sizeof(app.seasonStart), "12-01");
+    snprintf(app.seasonEnd, sizeof(app.seasonEnd), "03-01");
+    app.seasonNow = 1;
     app.maxFps = 60;
     app.controlFd = -1;
     app.running = 1;
     config_load();
+    season_parse();
+    app.seasonNow = app.seasonEnabled ? season_today() : 1;
 
     if (argc > 1 && strcmp(argv[1], "ctl") == 0) {
         char command[512] = "";
@@ -1091,6 +1187,9 @@ int main(int argc, char *argv[])
                "  monitors [all]       which outputs get snow\n"
                "  monitor <name> on|off\n"
                "  fullscreen on|off    no snow over a fullscreen window\n"
+               "  season on|off        only snow between the season dates\n"
+               "  season start MM-DD   first day of snow (default 12-01)\n"
+               "  season end MM-DD     first day without it (default 03-01)\n"
                "  clear                 blow the snow away\n"
                "  status                show settings\n"
                "  quit                  stop\n");
