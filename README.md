@@ -159,3 +159,4 @@ cc tests/menu_probe.c -o build/menu_probe $(pkg-config --cflags --libs gtk+-3.0 
 * macOS Spaces bookkeeping: Hyprland workspaces replace it; snow on a window
   that leaves the workspace waits for it and comes back with it.
 # snow-hyprland
+# snow-hyprland
