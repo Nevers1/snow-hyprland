@@ -1,0 +1,8 @@
+build/
+snowhush
+*.o
+*.png
+run.log
+
+# A clone of the macOS original, kept for reference while porting.
+ref/

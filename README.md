@@ -51,20 +51,24 @@ WantedBy=graphical-session.target
 ## Tray menu
 
 The snowflake in the tray (Waybar's `tray` module, ideally right where you want
-it) opens a menu:
+it) opens a menu. Every switch shows its state in the label itself — `✓` for an
+enabled option, a blank of the same width for a disabled one, `●`/`○` for the
+snowfall choice — because Waybar draws no checkbox of its own:
 
 | Entry | What it does |
 |---|---|
-| Snowfall → Off / Light / Steady / Heavy / Variable | how hard it snows |
-| Screens → … | snow on that output, or not |
-| Snow on windows | snow on window top edges at all |
-| Accumulate | snow builds up instead of blowing away |
-| Melt | piles slowly melt |
-| No snow over fullscreen | an app that takes the whole screen gets it |
-| Clear snow | a gust blows everything off |
-| Quit Snowhush | stop |
+| Snowfall → ○ Off / ○ Light / ● Steady / ○ Heavy / ○ Variable | how hard it snows; `Variable` ramps the strength up and down over a few minutes instead of holding one rate |
+| Screens → ✓ HDMI-A-1 / ✓ HDMI-A-2 | snow on that output, or not; untick one and its overlay is blanked and its simulation frozen (it picks up where it left off when ticked again) |
+| ✓ Snow on windows | snow collects on the top edges of windows; off means a level field, snow only on the bottom of the screen |
+| ✓ Accumulate | snow settles into drifts instead of being swept away as it lands |
+| ✓ Melt | drifts lose a little height over time; off keeps them forever |
+| ✓ No snow over fullscreen | while a window on that output is fullscreen the overlay is hidden entirely, so a film or a game gets a clean screen |
+| Clear snow | a gust blows every flake and drift off the screen |
+| Quit Snowhush | stop the app |
 
-A click on the icon itself pauses and resumes the snowfall.
+With `ItemIsMenu` set the host sends a left click to the menu, so the icon
+always opens it; a host that still sends `Activate` toggles the snowfall
+between `steady` and `off`.
 
 The menu is a `com.canonical.dbusmenu` service next to the
 `StatusNotifierItem`, so no GTK is involved: any StatusNotifierHost shows it,
